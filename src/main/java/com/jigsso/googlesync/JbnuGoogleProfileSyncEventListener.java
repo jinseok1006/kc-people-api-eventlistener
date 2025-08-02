@@ -34,7 +34,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
 
     public JbnuGoogleProfileSyncEventListener(KeycloakSession session) {
         this.session = session;
-        logger.info("전북대 구글 프로필 동기화 이벤트 리스너가 생성되었습니다.");
+        logger.trace("전북대 구글 프로필 동기화 이벤트 리스너가 생성되었습니다.");
     }
 
     @Override
@@ -337,6 +337,6 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
 
     @Override
     public void close() {
-        logger.info("전북대 구글 프로필 동기화 이벤트 리스너가 종료되었습니다");
+        logger.trace("전북대 구글 프로필 동기화 이벤트 리스너가 종료되었습니다");
     }
 }
