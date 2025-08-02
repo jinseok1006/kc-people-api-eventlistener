@@ -10,6 +10,7 @@ import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.RealmModel;
 
 import java.util.stream.Stream;
+import java.util.Map;
 import java.io.IOException;
 import org.keycloak.broker.provider.util.SimpleHttp;
 import org.jboss.logging.Logger;
@@ -56,9 +57,31 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
             return;
         }
 
+        // 현재 로그인 세션의 identity provider 확인
+        Map<String, String> eventDetails = event.getDetails();
+        String currentIdentityProvider = null;
+        if (eventDetails != null) {
+            currentIdentityProvider = eventDetails.get("identity_provider");
+        }
+
         logger.info("로그인 이벤트 감지됨");
         logger.info("사용자ID: " + userId);
         logger.info("영역ID: " + realmId);
+        logger.info("현재 로그인 방식: " + (currentIdentityProvider != null ? currentIdentityProvider : "로컬 로그인"));
+
+        // 로컬 로그인인 경우 enrichment 생략
+        if (currentIdentityProvider == null) {
+            logger.info("로컬 로그인 감지 - 구글 프로필 동기화를 생략합니다");
+            return;
+        }
+
+        // 구글 로그인이 아닌 다른 IdP인 경우도 생략
+        if (!GOOGLE_PROVIDER_ID.equals(currentIdentityProvider)) {
+            logger.info("구글이 아닌 IdP 로그인 감지 (" + currentIdentityProvider + ") - 구글 프로필 동기화를 생략합니다");
+            return;
+        }
+
+        logger.info("구글 로그인 감지 - 구글 프로필 동기화를 진행합니다");
 
         RealmModel realm = session.realms().getRealm(realmId);
         if (realm == null) {
