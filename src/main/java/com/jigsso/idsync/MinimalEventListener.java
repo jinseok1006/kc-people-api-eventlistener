@@ -15,11 +15,22 @@ import org.keycloak.models.RealmModel;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
+import org.jboss.logging.Logger;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 최소한의 Event Listener (등록 확인용 POC)
  */
 public class MinimalEventListener implements EventListenerProvider {
+
+    private static final Logger logger = Logger.getLogger(MinimalEventListener.class);
+    private static final String GOOGLE_PEOPLE_API_URL = "https://people.googleapis.com/v1/people/me?personFields=organizations,externalIds";
+    private static final String GOOGLE_PROVIDER_ID = "google";
 
     private final KeycloakSession session;
 
@@ -35,33 +46,6 @@ public class MinimalEventListener implements EventListenerProvider {
                 ", Realm: " + event.getRealmId() +
                 ", User: " + event.getUserId());
 
-        // // IDENTITY_PROVIDER_LOGIN, IDENTITY_PROVIDER_FIRST_LOGIN, LOGIN 이벤트 감지 (요구사항
-        // // 1.1)
-        // if (event.getType() == EventType.IDENTITY_PROVIDER_LOGIN ||
-        //         event.getType() == EventType.IDENTITY_PROVIDER_FIRST_LOGIN ||
-        //         event.getType() == EventType.LOGIN) {
-
-        //     System.out.println("POC: " + event.getType() + " event detected");
-
-        //     // Google Identity Provider 로그인 여부 확인 (또는 Google 사용자인지 확인)
-        //     if (isGoogleLogin(event) || isGoogleUser(event)) {
-        //         System.out.println("POC: Google login detected! User: " + event.getUserId());
-
-        //         // Google Access Token 추출 시도 (요구사항 5.1)
-        //         String accessToken = extractGoogleAccessToken(event);
-        //         if (accessToken != null) {
-        //             System.out.println("POC: Google Access Token extracted successfully");
-        //             // 디버깅용 토큰 로그 출력 (일부만 표시)
-        //             String tokenPreview = accessToken.length() > 20 ? accessToken.substring(0, 20) + "..."
-        //                     : accessToken;
-        //             System.out.println("POC: Token preview: " + tokenPreview);
-        //         } else {
-        //             System.out.println("POC: Failed to extract Google Access Token");
-        //         }
-        //     } else {
-        //         System.out.println("POC: Non-Google identity provider login");
-        //     }
-        // }
 
         if (event.getType() == EventType.LOGIN) {
             String userId = event.getUserId();
@@ -100,8 +84,38 @@ public class MinimalEventListener implements EventListenerProvider {
                     String token = identity.getToken();  // access_token 저장된 곳
 
                     if (token != null && !token.isBlank()) {
-                        System.out.println("POC: Google access token found, calling external API...");
-                        // callGooglePeopleApi(token);  // 사용자 정보 추가 가져오기
+                        System.out.println("POC: Google access token found!");
+                        System.out.println("POC: Token length: " + token.length());
+                        System.out.println("POC: Full token content: " + token);
+                        
+                        // 토큰이 JWT인지 확인 (점으로 구분된 3개 부분)
+                        String[] tokenParts = token.split("\\.");
+                        System.out.println("POC: Token parts count: " + tokenParts.length);
+                        if (tokenParts.length == 3) {
+                            System.out.println("POC: Token appears to be JWT format");
+                            System.out.println("POC: Header: " + tokenParts[0]);
+                            System.out.println("POC: Payload: " + tokenParts[1]);
+                            System.out.println("POC: Signature: " + tokenParts[2]);
+                        } else {
+                            System.out.println("POC: Token is not JWT format");
+                        }
+                        
+                        // 사용자가 @jbnu.ac.kr 이메일인지 확인
+                        String userEmail = user.getEmail();
+                        if (userEmail != null && userEmail.endsWith("@jbnu.ac.kr")) {
+                            logger.info("JBNU 사용자 감지, Google People API 호출 시작: " + user.getUsername());
+                            
+                            // JSON에서 실제 access_token 추출
+                            String actualToken = extractAccessTokenFromJson(token);
+                            if (actualToken != null) {
+                                // Google People API 호출
+                                callGooglePeopleApi(actualToken, user.getUsername(), user, realm);
+                            } else {
+                                logger.warn("액세스 토큰 추출 실패: " + user.getUsername());
+                            }
+                        } else {
+                            System.out.println("POC: 비 JBNU 사용자, API 호출 생략");
+                        }
                     } else {
                         System.out.println("POC: Google token is null or blank");
                     }
@@ -111,206 +125,205 @@ public class MinimalEventListener implements EventListenerProvider {
     }
 
     /**
-     * Google Identity Provider를 통한 로그인인지 확인
-     * 
-     * @param event LOGIN 이벤트
-     * @return Google 로그인이면 true, 아니면 false
+     * JSON 형태의 토큰에서 실제 access_token 값을 추출
      */
-    // private boolean isGoogleLogin(Event event) {
-    //     // 이벤트 세부 정보에서 Identity Provider 정보 확인
-    //     if (event.getDetails() != null) {
-    //         String identityProvider = event.getDetails().get("identity_provider");
-    //         if (identityProvider != null) {
-    //             System.out.println("POC: Identity Provider detected: " + identityProvider);
-    //             return "google".equals(identityProvider);
-    //         }
-    //     }
+    private String extractAccessTokenFromJson(String tokenString) {
+        try {
+            // JSON 형태인지 확인
+            if (tokenString.trim().startsWith("{") && tokenString.trim().endsWith("}")) {
+                logger.info("JSON 형태의 토큰 감지, access_token 추출 시도");
 
-    //     // Identity Provider 정보가 없으면 일반 로그인으로 간주
-    //     System.out.println("POC: No identity provider found, assuming direct login");
-    //     return false;
-    // }
+                // 간단한 JSON 파싱 (Jackson 사용하지 않고 문자열 처리)
+                String searchKey = "\"access_token\":\"";
+                int startIndex = tokenString.indexOf(searchKey);
+
+                if (startIndex != -1) {
+                    startIndex += searchKey.length();
+                    int endIndex = tokenString.indexOf("\"", startIndex);
+
+                    if (endIndex != -1) {
+                        String accessToken = tokenString.substring(startIndex, endIndex);
+                        logger.info("JSON에서 access_token 추출 성공: "
+                                + accessToken.substring(0, Math.min(10, accessToken.length())) + "...");
+                        return accessToken;
+                    } else {
+                        logger.error("access_token 값의 끝을 찾을 수 없음");
+                    }
+                } else {
+                    logger.error("JSON에서 access_token 키를 찾을 수 없음");
+                }
+            } else {
+                // JSON이 아닌 경우 그대로 반환
+                logger.info("JSON이 아닌 일반 토큰으로 판단, 그대로 사용");
+                return tokenString;
+            }
+        } catch (Exception e) {
+            logger.error("토큰 JSON 파싱 중 오류 발생", e);
+        }
+
+        return null;
+    }
+
+    private void callGooglePeopleApi(String accessToken, String username, UserModel user, RealmModel realm) {
+        logger.info("=== Google People API 호출 시작 ===");
+        logger.info("사용자: " + username);
+        logger.info("API URL: " + GOOGLE_PEOPLE_API_URL);
+        logger.info("토큰 길이: " + accessToken.length());
+        logger.info("토큰 시작: " + accessToken.substring(0, Math.min(30, accessToken.length())) + "...");
+
+        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+            HttpGet request = new HttpGet(GOOGLE_PEOPLE_API_URL);
+            request.setHeader("Authorization", "Bearer " + accessToken);
+            request.setHeader("Accept", "application/json");
+            request.setHeader("User-Agent", "Keycloak-SPI/1.0");
+
+            logger.info("HTTP 요청 헤더 설정 완료");
+            logger.info(
+                    "Authorization: Bearer " + accessToken.substring(0, Math.min(20, accessToken.length())) + "...");
+
+            logger.info("HTTP 요청 실행 중...");
+            var response = httpClient.execute(request);
+
+            int statusCode = response.getStatusLine().getStatusCode();
+            String statusMessage = response.getStatusLine().getReasonPhrase();
+            String responseBody = EntityUtils.toString(response.getEntity());
+
+            logger.info("=== API 응답 상세 정보 ===");
+            logger.info("상태 코드: " + statusCode);
+            logger.info("상태 메시지: " + statusMessage);
+            logger.info("응답 본문 길이: " + responseBody.length());
+            logger.info("응답 본문: " + responseBody);
+
+            // 응답 헤더도 출력
+            logger.info("=== 응답 헤더 ===");
+            for (var header : response.getAllHeaders()) {
+                logger.info(header.getName() + ": " + header.getValue());
+            }
+
+            if (statusCode == 401) {
+                logger.error("=== 401 Unauthorized 분석 ===");
+                logger.error("토큰이 만료되었거나 유효하지 않을 수 있습니다");
+                logger.error("토큰 전체 길이: " + accessToken.length());
+                if (responseBody.contains("invalid_token")) {
+                    logger.error("응답에 'invalid_token' 포함됨");
+                }
+                if (responseBody.contains("expired")) {
+                    logger.error("응답에 'expired' 포함됨 - 토큰 만료");
+                }
+            } else if (statusCode == 200) {
+                logger.info("=== API 호출 성공! ===");
+                // 응답 데이터를 파싱하여 사용자 프로필 업데이트
+                updateUserProfile(responseBody, user);
+            }
+
+        } catch (Exception e) {
+            logger.error("=== Google People API 호출 중 예외 발생 ===", e);
+            logger.error("예외 타입: " + e.getClass().getSimpleName());
+            logger.error("예외 메시지: " + e.getMessage());
+        }
+
+        logger.info("=== Google People API 호출 완료 ===");
+    }
 
     /**
-     * 사용자가 Google Identity Provider를 통해 생성된 사용자인지 확인
-     * LOGIN 이벤트에서 사용 (이벤트 세부 정보에 identity_provider가 없을 수 있음)
-     * 
-     * @param event LOGIN 이벤트
-     * @return Google 사용자이면 true, 아니면 false
+     * Google People API 응답을 파싱하여 사용자 프로필 업데이트
      */
-    // private boolean isGoogleUser(Event event) {
-    //     if (event.getUserId() == null) {
-    //         return false;
-    //     }
+    private void updateUserProfile(String responseBody, UserModel user) {
+        logger.info("=== 사용자 프로필 업데이트 시작 ===");
 
-    //     try {
-    //         UserModel user = session.users().getUserById(session.getContext().getRealm(), event.getUserId());
-    //         if (user != null) {
-    //             // 사용자의 FederatedIdentity에서 Google 연결 확인
-    //             FederatedIdentityModel federatedIdentity = session.users()
-    //                     .getFederatedIdentity(session.getContext().getRealm(), user, "google");
+        try {
+            // externalId 추출 및 업데이트
+            String externalId = extractExternalId(responseBody);
+            if (externalId != null && !externalId.trim().isEmpty()) {
+                logger.info("External ID 추출 성공: " + externalId);
+                user.setSingleAttribute("externalId", externalId);
+                logger.info("사용자 프로필에 externalId 설정 완료");
+            } else {
+                logger.warn("External ID를 찾을 수 없습니다");
+            }
 
-    //             if (federatedIdentity != null) {
-    //                 System.out.println("POC: User has Google federated identity");
-    //                 return true;
-    //             }
-    //         }
-    //     } catch (Exception e) {
-    //         System.out.println("POC: Exception while checking Google user: " + e.getMessage());
-    //     }
+            // department 추출 및 업데이트
+            String department = extractDepartment(responseBody);
+            if (department != null && !department.trim().isEmpty()) {
+                logger.info("Department 추출 성공: " + department);
+                user.setSingleAttribute("department", department);
+                logger.info("사용자 프로필에 department 설정 완료");
+            } else {
+                logger.warn("Department를 찾을 수 없습니다");
+            }
 
-    //     return false;
-    // }
+            logger.info("=== 사용자 프로필 업데이트 완료 ===");
+
+        } catch (Exception e) {
+            logger.error("사용자 프로필 업데이트 중 오류 발생", e);
+        }
+    }
 
     /**
-     * Keycloak 세션에서 Google Access Token을 추출
-     * 
-     * @param event IDENTITY_PROVIDER_LOGIN 또는 IDENTITY_PROVIDER_FIRST_LOGIN 이벤트
-     * @return Google Access Token 또는 null (실패 시)
+     * JSON 응답에서 첫 번째 externalId 값 추출
      */
-    // private String extractGoogleAccessToken(Event event) {
-    //     try {
-    //         System.out.println("POC: Attempting to extract Google Access Token...");
+    private String extractExternalId(String responseBody) {
+        try {
+            logger.info("External ID 추출 시도 중...");
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode json = mapper.readTree(responseBody);
+            
+            if (json.has("externalIds")) {
+                JsonNode externalIds = json.get("externalIds");
+                
+                if (externalIds.isArray() && externalIds.size() > 0) {
+                    JsonNode firstExternalId = externalIds.get(0);
+                    
+                    if (firstExternalId.has("value")) {
+                        String externalId = firstExternalId.get("value").asText();
+                        logger.info("External ID 파싱 성공: " + externalId);
+                        return externalId;
+                    }
+                }
+            }
+            
+            logger.warn("External ID를 찾을 수 없습니다");
+            return null;
 
-    //         // 먼저 이벤트 세부 정보에서 토큰 조회 시도 (FIRST_LOGIN에서 유용)
-    //         if (event.getDetails() != null) {
-    //             System.out.println("POC: Checking event details for access token...");
+        } catch (Exception e) {
+            logger.error("External ID 추출 중 오류 발생", e);
+            return null;
+        }
+    }
 
-    //             // 다양한 토큰 키 시도
-    //             String[] tokenKeys = { "access_token", "google_access_token", "broker_access_token" };
-    //             for (String key : tokenKeys) {
-    //                 String token = event.getDetails().get(key);
-    //                 if (token != null) {
-    //                     System.out.println("POC: Access token found in event details with key: " + key);
-    //                     return token;
-    //                 }
-    //             }
+    /**
+     * JSON 응답에서 첫 번째 organization의 department 값 추출
+     */
+    private String extractDepartment(String responseBody) {
+        try {
+            logger.info("Department 추출 시도 중...");
+            
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode json = mapper.readTree(responseBody);
+            
+            if (json.has("organizations")) {
+                JsonNode organizations = json.get("organizations");
+                
+                if (organizations.isArray() && organizations.size() > 0) {
+                    JsonNode firstOrg = organizations.get(0);
+                    
+                    if (firstOrg.has("department")) {
+                        String department = firstOrg.get("department").asText();
+                        logger.info("Department 파싱 성공: " + department);
+                        return department;
+                    }
+                }
+            }
+            
+            logger.warn("Department를 찾을 수 없습니다");
+            return null;
 
-    //             // 이벤트 세부 정보 전체 출력 (디버깅용)
-    //             System.out.println("POC: Event details keys: " + event.getDetails().keySet());
-    //         }
-
-    //         // 사용자 ID가 있는 경우 사용자 세션에서 토큰 조회
-    //         if (event.getUserId() != null) {
-    //             System.out.println("POC: User ID available, checking user session...");
-
-    //             // 현재 사용자 세션 조회
-    //             UserModel user = session.users().getUserById(session.getContext().getRealm(), event.getUserId());
-    //             if (user == null) {
-    //                 System.out.println("POC: User not found: " + event.getUserId());
-    //             } else {
-    //                 // 사용자 세션에서 브로커 세션 정보 조회
-    //                 String sessionId = event.getSessionId();
-    //                 if (sessionId != null) {
-    //                     UserSessionModel userSession = session.sessions().getUserSession(
-    //                             session.getContext().getRealm(),
-    //                             sessionId);
-    //                     if (userSession != null) {
-    //                         System.out.println("POC: User session found, checking for broker token...");
-
-    //                         // 브로커 토큰은 세션 노트에 저장될 수 있음
-    //                         String brokerToken = userSession.getNote("BROKER_ACCESS_TOKEN");
-    //                         if (brokerToken != null) {
-    //                             System.out.println("POC: Broker access token found in session notes");
-    //                             return brokerToken;
-    //                         }
-
-    //                         // Google 특정 토큰 키 시도
-    //                         String googleToken = userSession.getNote("google.access_token");
-    //                         if (googleToken != null) {
-    //                             System.out.println("POC: Google access token found in session notes");
-    //                             return googleToken;
-    //                         }
-
-    //                         System.out.println("POC: No access token found in session notes");
-    //                     } else {
-    //                         System.out.println("POC: User session not found for session ID: " + sessionId);
-    //                     }
-    //                 } else {
-    //                     System.out.println("POC: No session ID in event");
-    //                 }
-    //             }
-    //         } else {
-    //             System.out.println("POC: No user ID in event (normal for FIRST_LOGIN), trying alternative methods...");
-
-    //             // code_id를 사용해서 인증 세션에서 토큰 조회 시도
-    //             if (event.getDetails() != null) {
-    //                 String codeId = event.getDetails().get("code_id");
-    //                 if (codeId != null) {
-    //                     System.out.println("POC: Found code_id, checking authentication session: " + codeId);
-
-    //                     try {
-    //                         // Root Authentication Session에서 Authentication Session 조회
-    //                         RootAuthenticationSessionModel rootAuthSession = session.authenticationSessions()
-    //                                 .getRootAuthenticationSession(session.getContext().getRealm(), codeId);
-
-    //                         if (rootAuthSession != null) {
-    //                             System.out.println("POC: Root authentication session found");
-
-    //                             // 클라이언트별 Authentication Session 조회
-    //                             for (String clientId : rootAuthSession.getAuthenticationSessions().keySet()) {
-    //                                 AuthenticationSessionModel authSession = rootAuthSession.getAuthenticationSessions()
-    //                                         .get(clientId);
-    //                                 if (authSession != null) {
-    //                                     System.out.println("POC: Checking auth session for client: " + clientId);
-
-    //                                     // 인증 세션 노트에서 브로커 토큰 조회
-    //                                     String[] brokerTokenKeys = {
-    //                                             "BROKER_ACCESS_TOKEN",
-    //                                             "google.access_token",
-    //                                             "IDENTITY_PROVIDER_ACCESS_TOKEN",
-    //                                             "access_token"
-    //                                     };
-
-    //                                     for (String tokenKey : brokerTokenKeys) {
-    //                                         String token = authSession.getAuthNote(tokenKey);
-    //                                         if (token != null) {
-    //                                             System.out.println("POC: Access token found in auth session with key: "
-    //                                                     + tokenKey);
-    //                                             return token;
-    //                                         }
-    //                                     }
-
-    //                                     // 사용자 세션 노트도 확인
-    //                                     for (String tokenKey : brokerTokenKeys) {
-    //                                         String token = authSession.getUserSessionNotes().get(tokenKey);
-    //                                         if (token != null) {
-    //                                             System.out.println(
-    //                                                     "POC: Access token found in user session notes with key: "
-    //                                                             + tokenKey);
-    //                                             return token;
-    //                                         }
-    //                                     }
-
-    //                                     System.out.println(
-    //                                             "POC: No access token found in auth session for client: " + clientId);
-    //                                 }
-    //                             }
-    //                         } else {
-    //                             System.out.println("POC: Root authentication session not found for code_id: " + codeId);
-    //                         }
-    //                     } catch (Exception authEx) {
-    //                         System.out.println(
-    //                                 "POC: Exception while checking authentication session: " + authEx.getMessage());
-    //                         authEx.printStackTrace();
-    //                     }
-    //                 } else {
-    //                     System.out.println("POC: No code_id found in event details");
-    //                 }
-    //             }
-    //         }
-
-    //         // 토큰을 찾을 수 없는 경우 (요구사항 5.4)
-    //         System.out.println("POC: Google Access Token not found in any location");
-    //         return null;
-
-    //     } catch (Exception e) {
-    //         // 예외 발생 시 로깅 및 null 반환 (요구사항 5.2)
-    //         System.out.println("POC: Exception while extracting Google Access Token: " + e.getMessage());
-    //         e.printStackTrace();
-    //         return null;
-    //     }
-    // }
+        } catch (Exception e) {
+            logger.error("Department 추출 중 오류 발생", e);
+            return null;
+        }
+    }
 
     @Override
     public void onEvent(AdminEvent event, boolean includeRepresentation) {
