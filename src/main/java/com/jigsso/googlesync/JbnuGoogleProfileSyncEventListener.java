@@ -39,8 +39,8 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
     @Override
     public void onEvent(Event event) {
         // 모든 이벤트에 대해 간단한 로그만 출력 (요구사항 4.3)
-        logger.debug("이벤트 수신 - 타입: {}, 영역: {}, 사용자: {}", 
-                event.getType(), event.getRealmId(), event.getUserId());
+        logger.debug("이벤트 수신 - 타입: " + event.getType() + 
+                ", 영역: " + event.getRealmId() + ", 사용자: " + event.getUserId());
 
         if (event.getType() == EventType.LOGIN) {
             handleLoginEvent(event);
@@ -52,27 +52,27 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
         String realmId = event.getRealmId();
 
         if (userId == null || realmId == null) {
-            logger.warn("로그인 이벤트에 null 데이터 포함 - 사용자ID: {}, 영역ID: {}", userId, realmId);
+            logger.warn("로그인 이벤트에 null 데이터 포함 - 사용자ID: " + userId + ", 영역ID: " + realmId);
             return;
         }
 
         logger.info("로그인 이벤트 감지됨");
-        logger.info("사용자ID: {}", userId);
-        logger.info("영역ID: {}", realmId);
+        logger.info("사용자ID: " + userId);
+        logger.info("영역ID: " + realmId);
 
         RealmModel realm = session.realms().getRealm(realmId);
         if (realm == null) {
-            logger.warn("영역을 찾을 수 없음 - ID: {}", realmId);
+            logger.warn("영역을 찾을 수 없음 - ID: " + realmId);
             return;
         }
 
         UserModel user = session.users().getUserById(realm, userId);
         if (user == null) {
-            logger.warn("사용자를 찾을 수 없음 - 사용자ID: {}, 영역: {}", userId, realmId);
+            logger.warn("사용자를 찾을 수 없음 - 사용자ID: " + userId + ", 영역: " + realmId);
             return;
         }
 
-        logger.debug("사용자 조회 완료 - 사용자명: {}", user.getUsername());
+        logger.debug("사용자 조회 완료 - 사용자명: " + user.getUsername());
 
         // Google Identity 처리 - Stream을 직접 사용하여 성능 최적화
         session.users().getFederatedIdentitiesStream(realm, user)
@@ -91,12 +91,12 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
         String federatedUserId = identity.getUserId();
 
         if (provider == null || federatedUserId == null) {
-            logger.warn("연합 신원에 null 데이터 포함 - 공급자: {}, 사용자ID: {}", provider, federatedUserId);
+            logger.warn("연합 신원에 null 데이터 포함 - 공급자: " + provider + ", 사용자ID: " + federatedUserId);
             return;
         }
 
-        logger.debug("연합 공급자 발견: {}", provider);
-        logger.debug("연합 사용자ID: {}", federatedUserId);
+        logger.debug("연합 공급자 발견: " + provider);
+        logger.debug("연합 사용자ID: " + federatedUserId);
 
         String token = identity.getToken();
         if (token == null || token.isBlank()) {
@@ -105,8 +105,8 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
         }
 
         logger.debug("구글 액세스 토큰 발견!");
-        logger.debug("토큰 길이: {}", token.length());
-        logger.debug("전체 토큰 내용: {}", token);
+        logger.debug("토큰 길이: " + token.length());
+        logger.debug("전체 토큰 내용: " + token);
         
         analyzeTokenFormat(token);
         
@@ -116,7 +116,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
             return;
         }
 
-        logger.info("전북대 사용자 감지, 구글 People API 호출 시작: {}", user.getUsername());
+        logger.info("전북대 사용자 감지, 구글 People API 호출 시작: " + user.getUsername());
         
         // JSON에서 실제 access_token 추출
         String actualToken = extractAccessTokenFromJson(token);
@@ -124,7 +124,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
             // Google People API 호출
             callGooglePeopleApi(actualToken, user.getUsername(), user, realm);
         } else {
-            logger.warn("액세스 토큰 추출 실패: {}", user.getUsername());
+            logger.warn("액세스 토큰 추출 실패: " + user.getUsername());
         }
     }
 
@@ -136,12 +136,12 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
 
         // 토큰이 JWT인지 확인 (점으로 구분된 3개 부분)
         String[] tokenParts = token.split("\\.");
-        logger.debug("토큰 구성 요소 개수: {}", tokenParts.length);
+        logger.debug("토큰 구성 요소 개수: " + tokenParts.length);
         if (tokenParts.length == 3) {
             logger.debug("토큰이 JWT 형식으로 판단됨");
-            logger.debug("헤더: {}", tokenParts[0]);
-            logger.debug("페이로드: {}", tokenParts[1]);
-            logger.debug("서명: {}", tokenParts[2]);
+            logger.debug("헤더: " + tokenParts[0]);
+            logger.debug("페이로드: " + tokenParts[1]);
+            logger.debug("서명: " + tokenParts[2]);
         } else {
             logger.debug("토큰이 JWT 형식이 아님");
         }
@@ -177,15 +177,15 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
                 if (jsonNode.has("access_token")) {
                     String accessToken = jsonNode.get("access_token").asText();
                     if (accessToken != null && !accessToken.isEmpty()) {
-                        logger.info("JSON에서 access_token 추출 성공: {}...", 
-                                accessToken.substring(0, Math.min(10, accessToken.length())));
+                        logger.info("JSON에서 access_token 추출 성공: " + 
+                                accessToken.substring(0, Math.min(10, accessToken.length())) + "...");
                         return accessToken;
                     } else {
                         logger.warn("access_token 필드가 null이거나 비어있음");
                     }
                 } else {
                     logger.error("JSON에서 access_token 키를 찾을 수 없음");
-                    logger.info("사용 가능한 키들: {}", jsonNode.fieldNames().toString());
+                    logger.info("사용 가능한 키들: " + jsonNode.fieldNames().toString());
                 }
             } else {
                 // JSON이 아닌 경우 그대로 반환
@@ -211,10 +211,10 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
         }
 
         logger.info("=== 구글 People API 호출 시작 (SimpleHttp) ===");
-        logger.info("사용자: {}", username);
-        logger.info("API URL: {}", GOOGLE_PEOPLE_API_URL);
-        logger.info("토큰 길이: {}", accessToken.length());
-        logger.info("토큰 시작: {}...", accessToken.substring(0, Math.min(30, accessToken.length())));
+        logger.info("사용자: " + username);
+        logger.info("API URL: " + GOOGLE_PEOPLE_API_URL);
+        logger.info("토큰 길이: " + accessToken.length());
+        logger.info("토큰 시작: " + accessToken.substring(0, Math.min(30, accessToken.length())) + "...");
 
         try {
             JsonNode response = SimpleHttp.doGet(GOOGLE_PEOPLE_API_URL, session)
@@ -225,7 +225,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
 
             if (response != null) {
                 logger.info("=== API 호출 성공! ===");
-                logger.info("응답 본문: {}", response.toString());
+                logger.info("응답 본문: " + response.toString());
                 
                 // 응답 데이터를 파싱하여 사용자 프로필 업데이트
                 updateUserProfileFromJson(response, user);
@@ -235,8 +235,8 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
 
         } catch (IOException e) {
             logger.error("=== 구글 People API 호출 중 예외 발생 ===", e);
-            logger.error("예외 타입: {}", e.getClass().getSimpleName());
-            logger.error("예외 메시지: {}", e.getMessage());
+            logger.error("예외 타입: " + e.getClass().getSimpleName());
+            logger.error("예외 메시지: " + e.getMessage());
         }
 
         logger.info("=== 구글 People API 호출 완료 ===");
@@ -267,7 +267,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
                     if (firstExternalId != null && firstExternalId.has("value")) {
                         String externalId = firstExternalId.get("value").asText();
                         if (externalId != null && !externalId.trim().isEmpty()) {
-                            logger.info("외부 ID 추출 성공: {}", externalId);
+                            logger.info("외부 ID 추출 성공: " + externalId);
                             user.setSingleAttribute("externalId", externalId);
                             logger.info("사용자 프로필에 외부 ID 설정 완료");
                         } else {
@@ -287,7 +287,7 @@ public class JbnuGoogleProfileSyncEventListener implements EventListenerProvider
                     if (firstOrg != null && firstOrg.has("department")) {
                         String department = firstOrg.get("department").asText();
                         if (department != null && !department.trim().isEmpty()) {
-                            logger.info("부서 추출 성공: {}", department);
+                            logger.info("부서 추출 성공: " + department);
                             user.setSingleAttribute("department", department);
                             logger.info("사용자 프로필에 부서 설정 완료");
                         } else {
