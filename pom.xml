@@ -1,12 +1,13 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  <groupId>com.jigsso.idsync</groupId>
-  <artifactId>event-idsync</artifactId>
+  <groupId>com.jigsso</groupId>
+  <artifactId>jbnu-google-profile-sync</artifactId>
   <packaging>jar</packaging>
-  <version>1.0-SNAPSHOT</version>
-  <name>idsync</name>
-  <url>http://maven.apache.org</url>
+  <version>1.0.0-SNAPSHOT</version>
+  <name>JBNU Google Profile Sync</name>
+  <description>전북대학교 구글 프로필 동기화 Keycloak 플러그인</description>
+  <url>https://github.com/jigsso/jbnu-google-profile-sync</url>
   
   <properties>
     <maven.compiler.source>11</maven.compiler.source>
